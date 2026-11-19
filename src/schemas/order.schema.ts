@@ -19,4 +19,16 @@ export const createOrderSchema = z.object({
   mechanicNotes: z.string().max(500).optional(),
 });
 
-export type CreateOrderInput = z.infer<typeof createOrderSchema>;
+export type CreateOrderInput = z.infer<typeof createOrderSchema>;export const updateOrderStatusSchema = z.object({
+  status: z.enum(['CONFIRMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED']),
+  mechanicNotes: z.string().max(500).optional(),
+});
+
+export const availabilityQuerySchema = z.object({
+  mechanicId: z.string().uuid('Nieprawidłowe ID mechanika'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Wymagany format daty YYYY-MM-DD'),
+  durationMinutes: z.coerce.number().int().min(15).max(480).default(60),
+});
+
+export type UpdateOrderStatusInput = z.infer<typeof updateOrderStatusSchema>;
+

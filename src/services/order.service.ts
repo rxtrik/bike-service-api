@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
-import { CreateOrderInput } from '../schemas/order.schema';
+import { CreateOrderInput, UpdateOrderStatusInput } from '../schemas/order.schema';
 
 export class AppError extends Error {
   constructor(
@@ -145,4 +145,100 @@ export async function getBikeServiceHistory(frameNumber: string) {
   }
 
   return bike;
+}
+
+export async function updateOrderStatus(orderId: string, input: UpdateOrderStatusInput) {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const order = await tx.serviceOrder.findUnique({
+      where: { id: orderId },
+      include: { parts: true },
+    });
+
+    if (!order) {
+      throw new AppError(404, 'Nie znaleziono zlecenia o podanym ID');
+    }
+
+    if (order.status === 'COMPLETED' || order.status === 'CANCELLED') {
+      throw new AppError(
+        400,
+        `Nie można zmienić statusu zlecenia, które ma już status ${order.status}`
+      );
+    }
+
+    // Jeśli zlecenie jest anulowane, zwracamy zarezerwowane części na magazyn
+    if (input.status === 'CANCELLED') {
+      for (const item of order.parts) {
+        await tx.part.update({
+          where: { id: item.partId },
+          data: { stockQuantity: { increment: item.quantity } },
+        });
+      }
+    }
+
+    return tx.serviceOrder.update({
+      where: { id: orderId },
+      data: {
+        status: input.status,
+        mechanicNotes: input.mechanicNotes ?? order.mechanicNotes,
+      },
+      include: {
+        bike: true,
+        mechanic: { select: { id: true, fullName: true } },
+        services: { include: { serviceType: true } },
+        parts: { include: { part: true } },
+      },
+    });
+  });
+}
+
+export async function getMechanicAvailability(
+  mechanicId: string,
+  dateStr: string,
+  durationMinutes: number
+) {
+  const mechanic = await prisma.user.findUnique({ where: { id: mechanicId } });
+  if (!mechanic || mechanic.role !== 'MECHANIC') {
+    throw new AppError(404, 'Nie znaleziono mechanika o podanym ID');
+  }
+
+  // Godziny pracy serwisu: 09:00 - 17:00 UTC
+  const dayStart = new Date(`${dateStr}T09:00:00.000Z`);
+  const dayEnd = new Date(`${dateStr}T17:00:00.000Z`);
+
+  const existingOrders = await prisma.serviceOrder.findMany({
+    where: {
+      mechanicId,
+      status: { notIn: ['CANCELLED'] },
+      scheduledStart: { lt: dayEnd },
+      scheduledEnd: { gt: dayStart },
+    },
+    select: { scheduledStart: true, scheduledEnd: true },
+  });
+
+  const availableSlots: { start: string; end: string }[] = [];
+  const stepMs = 30 * 60_000; // skok co 30 minut
+  const durationMs = durationMinutes * 60_000;
+
+  for (let time = dayStart.getTime(); time + durationMs <= dayEnd.getTime(); time += stepMs) {
+    const slotStart = new Date(time);
+    const slotEnd = new Date(time + durationMs);
+
+    const hasConflict = existingOrders.some(
+      (order) => order.scheduledStart < slotEnd && order.scheduledEnd > slotStart
+    );
+
+    if (!hasConflict) {
+      availableSlots.push({
+        start: slotStart.toISOString(),
+        end: slotEnd.toISOString(),
+      });
+    }
+  }
+
+  return {
+    mechanicId,
+    date: dateStr,
+    durationMinutes,
+    availableSlots,
+  };
 }
