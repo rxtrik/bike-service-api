@@ -1,0 +1,107 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CLIENT
+  MECHANIC
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model User {
+  id           String         @id @default(uuid())
+  email        String         @unique
+  passwordHash String
+  fullName     String
+  role         Role           @default(CLIENT)
+  bikes        Bike[]
+  assignedJobs ServiceOrder[] @relation("MechanicOrders")
+  createdAt    DateTime       @default(now())
+}
+
+model Bike {
+  id          String         @id @default(uuid())
+  brand       String
+  model       String
+  frameNumber String         @unique
+  year        Int?
+  ownerId     String
+  owner       User           @relation(fields: [ownerId], references: [id])
+  orders      ServiceOrder[]
+  createdAt   DateTime       @default(now())
+}
+
+model ServiceType {
+  id               String             @id @default(uuid())
+  name             String             @unique
+  description      String?
+  estimatedMinutes Int
+  basePrice        Decimal            @db.Decimal(10, 2)
+  orderItems       OrderServiceItem[]
+}
+
+model Part {
+  id            String          @id @default(uuid())
+  sku           String          @unique
+  name          String
+  brand         String
+  stockQuantity Int             @default(0)
+  unitPrice     Decimal         @db.Decimal(10, 2)
+  orderItems    OrderPartItem[]
+}
+
+model ServiceOrder {
+  id             String             @id @default(uuid())
+  status         OrderStatus        @default(PENDING)
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  totalPrice     Decimal            @db.Decimal(10, 2)
+  mechanicNotes  String?
+  bikeId         String
+  bike           Bike               @relation(fields: [bikeId], references: [id])
+  mechanicId     String?
+  mechanic       User?              @relation("MechanicOrders", fields: [mechanicId], references: [id])
+  services       OrderServiceItem[]
+  parts          OrderPartItem[]
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([mechanicId, scheduledStart, scheduledEnd])
+}
+
+model OrderServiceItem {
+  id             String       @id @default(uuid())
+  orderId        String
+  order          ServiceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  serviceTypeId  String
+  serviceType    ServiceType  @relation(fields: [serviceTypeId], references: [id])
+  priceAtBooking Decimal      @db.Decimal(10, 2)
+}
+
+model OrderPartItem {
+  id             String       @id @default(uuid())
+  orderId        String
+  order          ServiceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  partId         String
+  part           Part         @relation(fields: [partId], references: [id])
+  quantity       Int
+  priceAtBooking Decimal      @db.Decimal(10, 2)
+}
